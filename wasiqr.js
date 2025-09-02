@@ -1,3 +1,5 @@
+// wasiqr.js
+
 const PastebinAPI = require('pastebin-js'),
 pastebin = new PastebinAPI('EMWTMkQAVfJa9kM-MRUrxd5Oku1U7pgL')
 const {makeid} = require('./id');
@@ -5,6 +7,7 @@ const QRCode = require('qrcode');
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const zlib = require('zlib'); // 👈 ---- ADD THIS LINE
 let router = express.Router()
 const pino = require("pino");
 const {
@@ -53,10 +56,16 @@ router.get('/', async (req, res) => {
 				if (qr) await res.end(await QRCode.toBuffer(qr));
 				if (connection == "open") {
 					await delay(5000);
-					let data = fs.readFileSync(__dirname + `/temp/${id}/creds.json`);
-					await delay(800);
-				   let b64data = Buffer.from(data).toString('base64');
-				   let session = await Qr_Code_By_Wasi_Tech.sendMessage(Qr_Code_By_Wasi_Tech.user.id, { text: '' + b64data });
+					
+                    // 👇 ---- START OF MODIFIED BLOCK ---- 👇
+                    const credsPath = __dirname + `/temp/${id}/creds.json`;
+                    const jsonData = fs.readFileSync(credsPath, 'utf8');
+                    const compressedData = zlib.gzipSync(jsonData);
+                    const base64Data = compressedData.toString('base64');
+                    const finalSessionString = 'BWM-XMD' + base64Data;
+                    
+					await Qr_Code_By_Wasi_Tech.sendMessage(Qr_Code_By_Wasi_Tech.user.id, { text: finalSessionString });
+                    // 👆 ---- END OF MODIFIED BLOCK ---- 👆
 	
 				   let WASI_MD_TEXT = `
 *_Session Connected By Wasi Tech_*
@@ -78,9 +87,8 @@ ______________________________________
 _____________________________________
 	
 _Don't Forget To Give Star To My Repo_`
-	 await Qr_Code_By_Wasi_Tech.sendMessage(Qr_Code_By_Wasi_Tech.user.id,{text:WASI_MD_TEXT},{quoted:session})
-
-
+	 // Using a variable for the session message is better for quoting
+	 const sessionMessage = await Qr_Code_By_Wasi_Tech.sendMessage(Qr_Code_By_Wasi_Tech.user.id,{text:WASI_MD_TEXT})
 
 					await delay(100);
 					await Qr_Code_By_Wasi_Tech.ws.close();
