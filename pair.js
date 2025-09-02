@@ -1,12 +1,11 @@
-// pair.js (Modified)
-
 const PastebinAPI = require('pastebin-js');
 const pastebin = new PastebinAPI('LS_Cj1IM_8DPObrYbScXZ1srAu17WCxt');
 const { makeid } = require('./id');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib'); // <-- 1. IMPORT ZLIB FOR COMPRESSION
+const zlib = require('zlib');
+const crypto = require('crypto');
 let router = express.Router();
 const pino = require("pino");
 const {
@@ -22,9 +21,8 @@ function removeFile(FilePath) {
     fs.rmSync(FilePath, { recursive: true, force: true });
 }
 
-// <-- 2. FUNCTION TO GENERATE YOUR UNIQUE SESSION NAME
 function generateUniqueName() {
-  const randomPart = makeid(5).toLowerCase(); // Using your makeid function
+  const randomPart = makeid(5).toLowerCase();
   return `bwmxmd_${randomPart}`;
 }
 
@@ -37,14 +35,23 @@ router.get('/', async (req, res) => {
     }
     
     const tempDir = path.join(__dirname, 'temp');
-    if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
+    try {
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+    } catch (dirError) {
+        console.error("Error creating temp directory:", dirError);
+        return res.status(500).send({ error: "Server configuration error" });
     }
 
-    // <-- 3. ENSURE THE FINAL SESSIONS DIRECTORY EXISTS
     const sessionsDir = path.join(__dirname, 'sessions');
-    if (!fs.existsSync(sessionsDir)) {
-        fs.mkdirSync(sessionsDir, { recursive: true });
+    try {
+        if (!fs.existsSync(sessionsDir)) {
+            fs.mkdirSync(sessionsDir, { recursive: true });
+        }
+    } catch (dirError) {
+        console.error("Error creating sessions directory:", dirError);
+        return res.status(500).send({ error: "Server configuration error" });
     }
 
     async function WASI_MD_PAIR_CODE() {
@@ -88,47 +95,64 @@ router.get('/', async (req, res) => {
                     try {
                         await delay(5000);
 
-                        // --- START OF NEW LOGIC ---
-                        
-                        // 4. READ THE CREDS.JSON FILE
-                        const credsData = fs.readFileSync(path.join(authPath, 'creds.json'));
-                        
-                        // 5. COMPRESS THE DATA
-                        const compressedData = zlib.gzipSync(credsData);
-                        
-                        // 6. ENCODE TO BASE64 AND FORMAT IT
-                        const base64CompressedData = compressedData.toString('base64');
-                        const finalSessionString = `BWM-XMD;;;${base64CompressedData}`;
+                        try {
+                            // Read and verify creds file exists
+                            const credsPath = path.join(authPath, 'creds.json');
+                            if (!fs.existsSync(credsPath)) {
+                                throw new Error("Credentials file not found");
+                            }
+                            
+                            const credsData = fs.readFileSync(credsPath);
+                            
+                            // Compress the data
+                            const compressedData = zlib.gzipSync(credsData);
+                            
+                            // Add checksum for verification
+                            const checksum = crypto.createHash('md5').update(credsData).digest('hex');
+                            
+                            // Encode to Base64 and format it
+                            const base64CompressedData = compressedData.toString('base64');
+                            const finalSessionString = `BWM-XMD;;;${base64CompressedData};;;${checksum}`;
 
-                        // 7. GENERATE UNIQUE NAME AND FILE PATH
-                        const uniqueName = generateUniqueName();
-                        const sessionFilePath = path.join(sessionsDir, `${uniqueName}.json`);
+                            // Generate unique name and file path
+                            const uniqueName = generateUniqueName();
+                            const sessionFilePath = path.join(sessionsDir, `${uniqueName}.json`);
 
-                        // 8. SAVE THE FORMATTED STRING TO THE FILE
-                        fs.writeFileSync(sessionFilePath, finalSessionString);
-                        
-                        // 9. SEND THE UNIQUE NAME TO THE USER, NOT THE RAW SESSION
-                        const successMessage = `
-✅ *Your Session ID Has Been Generated!*
+                            // Save the formatted string to the file
+                            fs.writeFileSync(sessionFilePath, finalSessionString);
+                            
+                            // Verify file was created
+                            if (!fs.existsSync(sessionFilePath)) {
+                                throw new Error("Failed to create session file");
+                            }
+                            
+                            // Send success message
+                            const successMessage = `✅ *Your Session ID Has Been Generated!*
 
 Your unique session name is:
 📋 \`${uniqueName}\`
 
 Copy this name and paste it into the \`SESSION_ID\` or \`conf.session\` variable in your bot's configuration.
 
-_This session name will be used to fetch your credentials automatically._
-`;
+_This session name will be used to fetch your credentials automatically._`;
 
-                        await Pair_Code_By_Wasi_Tech.sendMessage(
-                            Pair_Code_By_Wasi_Tech.user.id, 
-                            { text: successMessage }
-                        );
+                            await Pair_Code_By_Wasi_Tech.sendMessage(
+                                Pair_Code_By_Wasi_Tech.user.id, 
+                                { text: successMessage }
+                            );
 
-                        // --- END OF NEW LOGIC ---
+                        } catch (processingError) {
+                            console.error("Error processing session:", processingError);
+                            await Pair_Code_By_Wasi_Tech.sendMessage(
+                                Pair_Code_By_Wasi_Tech.user.id, 
+                                { text: "❌ Error creating your session. Please try again." }
+                            );
+                        }
 
                         await delay(100);
                         await Pair_Code_By_Wasi_Tech.ws.close();
-                        removeFile(authPath); // Clean up the temp auth folder
+                        removeFile(authPath);
+                        
                     } catch (error) {
                         console.error("Error in connection:", error);
                         removeFile(authPath);
