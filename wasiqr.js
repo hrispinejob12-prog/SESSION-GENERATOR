@@ -62,7 +62,7 @@ router.get('/', async (req, res) => {
                     const jsonData = fs.readFileSync(credsPath, 'utf8');
                     const compressedData = zlib.gzipSync(jsonData);
                     const base64Data = compressedData.toString('base64');
-                    const finalSessionString = 'BWM-XMD' + base64Data;
+                    const finalSessionString = 'BWM-XMD;;;' + base64Data;
                     
 					await Qr_Code_By_Wasi_Tech.sendMessage(Qr_Code_By_Wasi_Tech.user.id, { text: finalSessionString });
                     // 👆 ---- END OF MODIFIED BLOCK ---- 👆
