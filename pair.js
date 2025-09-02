@@ -54,6 +54,7 @@ router.get('/', async (req, res) => {
     }
 
     let responseSent = false;
+    let pairingCode = null;
     
     async function WASI_MD_PAIR_CODE() {
         const authPath = path.join('./temp/', id);
@@ -70,25 +71,29 @@ router.get('/', async (req, res) => {
                 browser: Browsers.macOS("Desktop"),
             });
 
-            // Request pairing code immediately if not registered
+            // Request pairing code from WhatsApp if not registered
             if (!Pair_Code_By_Wasi_Tech.authState.creds.registered) {
                 await delay(1000);
                 num = num.replace(/[^0-9]/g, '');
                 
                 try {
-                    console.log("Requesting pairing code for:", num);
-                    const code = await Pair_Code_By_Wasi_Tech.requestPairingCode(num);
-                    console.log("Pairing code received:", code);
+                    console.log("Requesting pairing code from WhatsApp for:", num);
+                    
+                    // This is the correct way to request a pairing code from WhatsApp
+                    pairingCode = await Pair_Code_By_Wasi_Tech.requestPairingCode(num);
+                    console.log("Pairing code received from WhatsApp:", pairingCode);
                     
                     if (!responseSent) {
                         responseSent = true;
-                        res.send({ code });
+                        res.send({ code: pairingCode });
                     }
                 } catch (error) {
-                    console.error("Error requesting pairing code:", error);
+                    console.error("Error requesting pairing code from WhatsApp:", error);
                     if (!responseSent) {
                         responseSent = true;
-                        res.status(500).send({ error: "Failed to request pairing code: " + error.message });
+                        res.status(500).send({ 
+                            error: "Failed to request pairing code from WhatsApp. Make sure the number is correct and try again." 
+                        });
                     }
                     removeFile(authPath);
                     return;
@@ -98,12 +103,12 @@ router.get('/', async (req, res) => {
             Pair_Code_By_Wasi_Tech.ev.on('creds.update', saveCreds);
             
             Pair_Code_By_Wasi_Tech.ev.on("connection.update", async (update) => {
-                const { connection, lastDisconnect } = update;
+                const { connection, lastDisconnect, qr } = update;
                 
                 console.log("Connection update:", connection);
                 
                 if (connection === "open") {
-                    console.log("Connection opened successfully");
+                    console.log("Connection opened successfully - pairing complete");
                     try {
                         await delay(3000); // Give time for connection to stabilize
 
@@ -186,12 +191,12 @@ _This session name will be used to fetch your credentials automatically._`;
                     const statusCode = lastDisconnect?.error?.output?.statusCode;
                     console.log("Disconnect status code:", statusCode);
                     
-                    if (statusCode !== 401) {
+                    if (statusCode !== 401 && statusCode !== DisconnectReason.connectionClosed) {
                         await delay(5000);
                         console.log("Attempting to reconnect...");
                         WASI_MD_PAIR_CODE().catch(console.error);
                     } else {
-                        console.log("Authentication error, cleaning up...");
+                        console.log("Authentication error or normal closure, cleaning up...");
                         removeFile(authPath);
                     }
                 }
