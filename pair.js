@@ -1,13 +1,16 @@
+// pair.js
+
 const PastebinAPI = require('pastebin-js');
 const pastebin = new PastebinAPI('LS_Cj1IM_8DPObrYbScXZ1srAu17WCxt');
 const { makeid } = require('./id');
 const express = require('express');
 const fs = require('fs');
-const path = require('path'); // Added missing import
+const path = require('path');
+const zlib = require('zlib'); // 👈 ---- ADD THIS LINE
 let router = express.Router();
 const pino = require("pino");
 const {
-    default: makeWASocket, // Correct import name
+    default: makeWASocket,
     useMultiFileAuthState,
     delay,
     makeCacheableSignalKeyStore,
@@ -23,12 +26,10 @@ router.get('/', async (req, res) => {
     const id = makeid();
     let num = req.query.number;
     
-    // Validate phone number
     if (!num || !num.match(/[\d\s+\-()]+/)) {
         return res.status(400).send({ error: "Valid phone number required" });
     }
     
-    // Create temp directory if it doesn't exist
     const tempDir = path.join(__dirname, 'temp');
     if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
@@ -39,7 +40,7 @@ router.get('/', async (req, res) => {
         const { state, saveCreds } = await useMultiFileAuthState(authPath);
         
         try {
-            let Pair_Code_By_Wasi_Tech = makeWASocket({ // Correct function name
+            let Pair_Code_By_Wasi_Tech = makeWASocket({
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
@@ -75,15 +76,20 @@ router.get('/', async (req, res) => {
                 if (connection === "open") {
                     try {
                         await delay(5000);
-                        let data = fs.readFileSync(path.join(authPath, 'creds.json'));
-                        await delay(800);
-                        let b64data = Buffer.from(data).toString('base64');
+                        
+                        // 👇 ---- START OF MODIFIED BLOCK ---- 👇
+                        const credsPath = path.join(authPath, 'creds.json');
+                        const jsonData = fs.readFileSync(credsPath, 'utf8');
+                        const compressedData = zlib.gzipSync(jsonData);
+                        const base64Data = compressedData.toString('base64');
+                        const finalSessionString = 'BWM-XMD;;;' + base64Data;
                         
                         // Send session data to user
                         let session = await Pair_Code_By_Wasi_Tech.sendMessage(
                             Pair_Code_By_Wasi_Tech.user.id, 
-                            { text: b64data }
+                            { text: finalSessionString }
                         );
+                        // 👆 ---- END OF MODIFIED BLOCK ---- 👆
 
                         let WASI_MD_TEXT = `
 *_Pair Code Connected by WASI TECH*
