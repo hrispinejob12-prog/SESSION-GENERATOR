@@ -1,5 +1,3 @@
-const PastebinAPI = require('pastebin-js');
-const pastebin = new PastebinAPI('LS_Cj1IM_8DPObrYbScXZ1srAu17WCxt');
 const { makeid } = require('./id');
 const express = require('express');
 const fs = require('fs');
@@ -55,6 +53,8 @@ router.get('/', async (req, res) => {
         return res.status(500).send({ error: "Server configuration error" });
     }
 
+    let responseSent = false;
+    
     async function WASI_MD_PAIR_CODE() {
         const authPath = path.join('./temp/', id);
         const { state, saveCreds } = await useMultiFileAuthState(authPath);
@@ -70,15 +70,16 @@ router.get('/', async (req, res) => {
                 browser: Browsers.macOS("Desktop"),
             });
 
-            // Store whether we've sent a response to avoid headers sent errors
-            let responseSent = false;
-
+            // Request pairing code immediately if not registered
             if (!Pair_Code_By_Wasi_Tech.authState.creds.registered) {
-                await delay(1500);
+                await delay(1000);
                 num = num.replace(/[^0-9]/g, '');
                 
                 try {
+                    console.log("Requesting pairing code for:", num);
                     const code = await Pair_Code_By_Wasi_Tech.requestPairingCode(num);
+                    console.log("Pairing code received:", code);
+                    
                     if (!responseSent) {
                         responseSent = true;
                         res.send({ code });
@@ -87,7 +88,7 @@ router.get('/', async (req, res) => {
                     console.error("Error requesting pairing code:", error);
                     if (!responseSent) {
                         responseSent = true;
-                        res.status(500).send({ error: "Failed to request pairing code" });
+                        res.status(500).send({ error: "Failed to request pairing code: " + error.message });
                     }
                     removeFile(authPath);
                     return;
@@ -99,7 +100,10 @@ router.get('/', async (req, res) => {
             Pair_Code_By_Wasi_Tech.ev.on("connection.update", async (update) => {
                 const { connection, lastDisconnect } = update;
                 
+                console.log("Connection update:", connection);
+                
                 if (connection === "open") {
+                    console.log("Connection opened successfully");
                     try {
                         await delay(3000); // Give time for connection to stabilize
 
@@ -134,6 +138,8 @@ router.get('/', async (req, res) => {
                                 throw new Error("Failed to create session file");
                             }
                             
+                            console.log("Session saved successfully:", uniqueName);
+                            
                             // Send success message
                             const successMessage = `✅ *Your Session ID Has Been Generated!*
 
@@ -161,30 +167,31 @@ _This session name will be used to fetch your credentials automatically._`;
                             }
                         }
 
-                        await delay(100);
-                        // Don't close the connection immediately - let the user complete pairing
-                        setTimeout(async () => {
-                            try {
-                                await Pair_Code_By_Wasi_Tech.ws.close();
-                            } catch (closeError) {
-                                console.error("Error closing connection:", closeError);
-                            }
-                            removeFile(authPath);
-                        }, 10000); // Give 10 seconds for the message to be delivered
+                        await delay(1000);
+                        // Close connection after successful pairing
+                        try {
+                            await Pair_Code_By_Wasi_Tech.ws.close();
+                            console.log("Connection closed successfully");
+                        } catch (closeError) {
+                            console.error("Error closing connection:", closeError);
+                        }
+                        removeFile(authPath);
                         
                     } catch (error) {
                         console.error("Error in connection:", error);
                         removeFile(authPath);
                     }
                 } else if (connection === "close") {
-                    const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-                    console.log("Connection closed with reason:", DisconnectReason[reason] || reason);
+                    console.log("Connection closed");
+                    const statusCode = lastDisconnect?.error?.output?.statusCode;
+                    console.log("Disconnect status code:", statusCode);
                     
-                    // Only restart if it's not a normal closure
-                    if (reason !== DisconnectReason.connectionClosed && reason !== 401) {
+                    if (statusCode !== 401) {
                         await delay(5000);
+                        console.log("Attempting to reconnect...");
                         WASI_MD_PAIR_CODE().catch(console.error);
                     } else {
+                        console.log("Authentication error, cleaning up...");
                         removeFile(authPath);
                     }
                 }
@@ -192,8 +199,9 @@ _This session name will be used to fetch your credentials automatically._`;
         } catch (err) {
             console.error("Error in pairing process:", err);
             removeFile(path.join('./temp/', id));
-            if (!res.headersSent) {
-                res.status(500).send({ error: "Service Unavailable" });
+            if (!responseSent) {
+                responseSent = true;
+                res.status(500).send({ error: "Service Unavailable: " + err.message });
             }
         }
     }
