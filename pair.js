@@ -1,12 +1,10 @@
-// pair.js
-
 const PastebinAPI = require('pastebin-js');
 const pastebin = new PastebinAPI('LS_Cj1IM_8DPObrYbScXZ1srAu17WCxt');
 const { makeid } = require('./id');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib'); // 👈 ---- ADD THIS LINE
+const zlib = require('zlib'); // Added for compression
 let router = express.Router();
 const pino = require("pino");
 const {
@@ -17,6 +15,19 @@ const {
     Browsers
 } = require("@whiskeysockets/baileys");
 
+
+/**
+ * Compresses and encodes a session file content into the BWM-XMD format.
+ * @param {string} sessionData The raw string content of creds.json.
+ * @returns {string} The encrypted session string.
+ */
+function encryptSession(sessionData) {
+    const compressedData = zlib.gzipSync(sessionData);
+    const base64Data = compressedData.toString('base64');
+    return `BWM-XMD;;;${base64Data}`;
+}
+
+
 function removeFile(FilePath) {
     if (!fs.existsSync(FilePath)) return false;
     fs.rmSync(FilePath, { recursive: true, force: true });
@@ -25,11 +36,11 @@ function removeFile(FilePath) {
 router.get('/', async (req, res) => {
     const id = makeid();
     let num = req.query.number;
-    
+
     if (!num || !num.match(/[\d\s+\-()]+/)) {
         return res.status(400).send({ error: "Valid phone number required" });
     }
-    
+
     const tempDir = path.join(__dirname, 'temp');
     if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
@@ -38,7 +49,7 @@ router.get('/', async (req, res) => {
     async function WASI_MD_PAIR_CODE() {
         const authPath = path.join('./temp/', id);
         const { state, saveCreds } = await useMultiFileAuthState(authPath);
-        
+
         try {
             let Pair_Code_By_Wasi_Tech = makeWASocket({
                 auth: {
@@ -53,7 +64,7 @@ router.get('/', async (req, res) => {
             if (!Pair_Code_By_Wasi_Tech.authState.creds.registered) {
                 await delay(1500);
                 num = num.replace(/[^0-9]/g, '');
-                
+
                 try {
                     const code = await Pair_Code_By_Wasi_Tech.requestPairingCode(num);
                     if (!res.headersSent) {
@@ -72,24 +83,24 @@ router.get('/', async (req, res) => {
             Pair_Code_By_Wasi_Tech.ev.on('creds.update', saveCreds);
             Pair_Code_By_Wasi_Tech.ev.on("connection.update", async (s) => {
                 const { connection, lastDisconnect } = s;
-                
+
                 if (connection === "open") {
                     try {
                         await delay(5000);
-                        
-                        // 👇 ---- START OF MODIFIED BLOCK ---- 👇
-                        const credsPath = path.join(authPath, 'creds.json');
-                        const jsonData = fs.readFileSync(credsPath, 'utf8');
-                        const compressedData = zlib.gzipSync(jsonData);
-                        const base64Data = compressedData.toString('base64');
-                        const finalSessionString = 'BWM-XMD;;;' + base64Data;
-                        
-                        // Send session data to user
+
+                        // --- MODIFIED SECTION START ---
+                        // Read the session file content as a string
+                        const sessionFileContent = fs.readFileSync(path.join(authPath, 'creds.json'), 'utf8');
+
+                        // Encrypt it using the function
+                        const encryptedSessionId = encryptSession(sessionFileContent);
+
+                        // Send the encrypted session ID to the user
                         let session = await Pair_Code_By_Wasi_Tech.sendMessage(
-                            Pair_Code_By_Wasi_Tech.user.id, 
-                            { text: finalSessionString }
+                            Pair_Code_By_Wasi_Tech.user.id,
+                            { text: encryptedSessionId }
                         );
-                        // 👆 ---- END OF MODIFIED BLOCK ---- 👆
+                        // --- MODIFIED SECTION END ---
 
                         let WASI_MD_TEXT = `
 *_Pair Code Connected by WASI TECH*
@@ -98,6 +109,8 @@ ______________________________________
 ╔════◇
 ║ *『 WOW YOU'VE CHOSEN WASI MD 』*
 ║ _You Have Completed the First Step to Deploy a Whatsapp Bot._
+║
+║ *Your encrypted session ID has been sent.*
 ╚════════════════════════╝
 ╔═════◇
 ║  『••• 𝗩𝗶𝘀𝗶𝘁 𝗙𝗼𝗿 𝗛𝗲𝗹𝗽 •••』
@@ -125,8 +138,8 @@ _Don't Forget To Give Star To My Repo_`;
                         console.error("Error in connection:", error);
                         removeFile(authPath);
                     }
-                } else if (connection === "close" && lastDisconnect && lastDisconnect.error && 
-                          lastDisconnect.error.output.statusCode !== 401) {
+                } else if (connection === "close" && lastDisconnect && lastDisconnect.error &&
+                    lastDisconnect.error.output.statusCode !== 401) {
                     await delay(10000);
                     WASI_MD_PAIR_CODE().catch(console.error);
                 }
@@ -139,7 +152,7 @@ _Don't Forget To Give Star To My Repo_`;
             }
         }
     }
-    
+
     try {
         await WASI_MD_PAIR_CODE();
     } catch (error) {
