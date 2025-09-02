@@ -13,7 +13,8 @@ const {
     useMultiFileAuthState,
     delay,
     makeCacheableSignalKeyStore,
-    Browsers
+    Browsers,
+    DisconnectReason
 } = require("@whiskeysockets/baileys");
 
 function removeFile(FilePath) {
@@ -69,31 +70,38 @@ router.get('/', async (req, res) => {
                 browser: Browsers.macOS("Desktop"),
             });
 
+            // Store whether we've sent a response to avoid headers sent errors
+            let responseSent = false;
+
             if (!Pair_Code_By_Wasi_Tech.authState.creds.registered) {
                 await delay(1500);
                 num = num.replace(/[^0-9]/g, '');
                 
                 try {
                     const code = await Pair_Code_By_Wasi_Tech.requestPairingCode(num);
-                    if (!res.headersSent) {
+                    if (!responseSent) {
+                        responseSent = true;
                         res.send({ code });
                     }
                 } catch (error) {
                     console.error("Error requesting pairing code:", error);
-                    if (!res.headersSent) {
+                    if (!responseSent) {
+                        responseSent = true;
                         res.status(500).send({ error: "Failed to request pairing code" });
                     }
                     removeFile(authPath);
+                    return;
                 }
             }
 
             Pair_Code_By_Wasi_Tech.ev.on('creds.update', saveCreds);
-            Pair_Code_By_Wasi_Tech.ev.on("connection.update", async (s) => {
-                const { connection, lastDisconnect } = s;
+            
+            Pair_Code_By_Wasi_Tech.ev.on("connection.update", async (update) => {
+                const { connection, lastDisconnect } = update;
                 
                 if (connection === "open") {
                     try {
-                        await delay(5000);
+                        await delay(3000); // Give time for connection to stabilize
 
                         try {
                             // Read and verify creds file exists
@@ -143,23 +151,42 @@ _This session name will be used to fetch your credentials automatically._`;
 
                         } catch (processingError) {
                             console.error("Error processing session:", processingError);
-                            await Pair_Code_By_Wasi_Tech.sendMessage(
-                                Pair_Code_By_Wasi_Tech.user.id, 
-                                { text: "❌ Error creating your session. Please try again." }
-                            );
+                            try {
+                                await Pair_Code_By_Wasi_Tech.sendMessage(
+                                    Pair_Code_By_Wasi_Tech.user.id, 
+                                    { text: "❌ Error creating your session. Please try again." }
+                                );
+                            } catch (msgError) {
+                                console.error("Failed to send error message:", msgError);
+                            }
                         }
 
                         await delay(100);
-                        await Pair_Code_By_Wasi_Tech.ws.close();
-                        removeFile(authPath);
+                        // Don't close the connection immediately - let the user complete pairing
+                        setTimeout(async () => {
+                            try {
+                                await Pair_Code_By_Wasi_Tech.ws.close();
+                            } catch (closeError) {
+                                console.error("Error closing connection:", closeError);
+                            }
+                            removeFile(authPath);
+                        }, 10000); // Give 10 seconds for the message to be delivered
                         
                     } catch (error) {
                         console.error("Error in connection:", error);
                         removeFile(authPath);
                     }
-                } else if (connection === "close" && lastDisconnect?.error?.output?.statusCode !== 401) {
-                    await delay(10000);
-                    WASI_MD_PAIR_CODE().catch(console.error);
+                } else if (connection === "close") {
+                    const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+                    console.log("Connection closed with reason:", DisconnectReason[reason] || reason);
+                    
+                    // Only restart if it's not a normal closure
+                    if (reason !== DisconnectReason.connectionClosed && reason !== 401) {
+                        await delay(5000);
+                        WASI_MD_PAIR_CODE().catch(console.error);
+                    } else {
+                        removeFile(authPath);
+                    }
                 }
             });
         } catch (err) {
