@@ -1,122 +1,116 @@
-const PastebinAPI = require('pastebin-js');
-const pastebin = new PastebinAPI('EMWTMkQAVfJa9kM-MRUrxd5Oku1U7pgL');
 const { makeid } = require('./id');
 const QRCode = require('qrcode');
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const zlib = require('zlib'); // Added for compression
+const zlib = require('zlib'); // <-- 1. IMPORT ZLIB
 let router = express.Router();
 const pino = require("pino");
 const {
-	default: Wasi_Tech,
-	useMultiFileAuthState,
-	jidNormalizedUser,
-	Browsers,
-	delay,
-	makeInMemoryStore,
+    default: Wasi_Tech,
+    useMultiFileAuthState,
+    Browsers,
+    delay,
 } = require("@whiskeysockets/baileys");
 
-/**
- * Compresses and encodes a session file content into the BWM-XMD format.
- * @param {string} sessionData The raw string content of creds.json.
- * @returns {string} The encrypted session string.
- */
-function encryptSession(sessionData) {
-	const compressedData = zlib.gzipSync(sessionData);
-	const base64Data = compressedData.toString('base64');
-	return `BWM-XMD;;;${base64Data}`;
+function removeFile(FilePath) {
+    if (!fs.existsSync(FilePath)) return false;
+    fs.rmSync(FilePath, { recursive: true, force: true });
 }
 
-function removeFile(FilePath) {
-	if (!fs.existsSync(FilePath)) return false;
-	fs.rmSync(FilePath, {
-		recursive: true,
-		force: true
-	});
-};
+// <-- 2. FUNCTION TO GENERATE YOUR UNIQUE SESSION NAME
+function generateUniqueName() {
+    const randomPart = makeid(5).toLowerCase();
+    return `bwmxmd_${randomPart}`;
+}
 
 router.get('/', async (req, res) => {
-	const id = makeid();
-	async function WASI_MD_QR_CODE() {
-		const {
-			state,
-			saveCreds
-		} = await useMultiFileAuthState('./temp/' + id);
-		try {
-			let Qr_Code_By_Wasi_Tech = Wasi_Tech({
-				auth: state,
-				printQRInTerminal: false,
-				logger: pino({
-					level: "silent"
-				}),
-				browser: Browsers.macOS("Desktop"),
-			});
+    const id = makeid();
 
-			Qr_Code_By_Wasi_Tech.ev.on('creds.update', saveCreds);
-			Qr_Code_By_Wasi_Tech.ev.on("connection.update", async (s) => {
-				const {
-					connection,
-					lastDisconnect,
-					qr
-				} = s;
-				if (qr) await res.end(await QRCode.toBuffer(qr));
-				if (connection == "open") {
-					await delay(5000);
+    // <-- 3. ENSURE THE FINAL SESSIONS DIRECTORY EXISTS
+    const sessionsDir = path.join(__dirname, 'sessions');
+    if (!fs.existsSync(sessionsDir)) {
+        fs.mkdirSync(sessionsDir, { recursive: true });
+    }
 
-					// --- MODIFIED SECTION START ---
-					// Read the session file as a string
-					const sessionFileContent = fs.readFileSync(__dirname + `/temp/${id}/creds.json`, 'utf8');
+    async function WASI_MD_QR_CODE() {
+        const { state, saveCreds } = await useMultiFileAuthState('./temp/' + id);
+        try {
+            let Qr_Code_By_Wasi_Tech = Wasi_Tech({
+                auth: state,
+                printQRInTerminal: false,
+                logger: pino({ level: "silent" }),
+                browser: Browsers.macOS("Desktop"),
+            });
 
-					// Encrypt the session content
-					const encryptedSessionId = encryptSession(sessionFileContent);
+            Qr_Code_By_Wasi_Tech.ev.on('creds.update', saveCreds);
+            Qr_Code_By_Wasi_Tech.ev.on("connection.update", async (s) => {
+                const { connection, lastDisconnect, qr } = s;
 
-					// Send the encrypted session ID
-					let session = await Qr_Code_By_Wasi_Tech.sendMessage(Qr_Code_By_Wasi_Tech.user.id, { text: encryptedSessionId });
-					// --- MODIFIED SECTION END ---
+                if (qr) {
+                    // Send the QR code buffer to the user's browser to display
+                    res.end(await QRCode.toBuffer(qr));
+                }
 
-					let WASI_MD_TEXT = `
-*_Session Connected By Wasi Tech_*
-*_Made With 🤍_*
-______________________________________
-╔════◇
-║ *『AMAZING YOU'VE CHOSEN WASI MD』*
-║ _You Have Completed the First Step to Deploy a Whatsapp Bot._
-║
-║ *Your encrypted session ID has been sent.*
-╚════════════════════════╝
-╔═════◇
-║  『••• 𝗩𝗶𝘀𝗶𝘁 𝗙𝗼𝗿 𝗛𝗲𝗹𝗽 •••』
-║❒ *Ytube:* _youtube.com/@wasitech1
-║❒ *Owner:* _https://wa.me/message/THZ3I25BYZM2E1_
-║❒ *Repo:* _https://github.com/wasixd/WASI-MD_
-║❒ *WaGroup:* _https://chat.whatsapp.com/FF6YuOZTAVB6Lu65cnY5BN_
-║❒ *WaChannel:* _https://whatsapp.com/channel/0029VaDK8ZUDjiOhwFS1cP2j_
-║❒ *Plugins:* _https://github.com/Itxxwasi 
-╚════════════════════════╝
-_____________________________________
-	
-_Don't Forget To Give Star To My Repo_`;
-					await Qr_Code_By_Wasi_Tech.sendMessage(Qr_Code_By_Wasi_Tech.user.id, { text: WASI_MD_TEXT }, { quoted: session });
+                if (connection === "open") {
+                    await delay(5000);
 
-					await delay(100);
-					await Qr_Code_By_Wasi_Tech.ws.close();
-					return await removeFile("temp/" + id);
-				} else if (connection === "close" && lastDisconnect && lastDisconnect.error && lastDisconnect.error.output.statusCode != 401) {
-					await delay(10000);
-					WASI_MD_QR_CODE();
-				}
-			});
-		} catch (err) {
-			if (!res.headersSent) {
-				await res.json({
-					code: "Service is Currently Unavailable"
-				});
-			}
-			console.log(err);
-			await removeFile("temp/" + id);
-		}
-	}
-	return await WASI_MD_QR_CODE();
+                    // --- START OF NEW LOGIC ---
+
+                    // 4. READ THE CREDS.JSON FILE
+                    const credsData = fs.readFileSync(path.join(__dirname, `/temp/${id}/creds.json`));
+
+                    // 5. COMPRESS THE DATA
+                    const compressedData = zlib.gzipSync(credsData);
+
+                    // 6. ENCODE TO BASE64 AND FORMAT IT
+                    const base64CompressedData = compressedData.toString('base64');
+                    const finalSessionString = `BWM-XMD;;;${base64CompressedData}`;
+
+                    // 7. GENERATE UNIQUE NAME AND FILE PATH
+                    const uniqueName = generateUniqueName();
+                    const sessionFilePath = path.join(sessionsDir, `${uniqueName}.json`);
+
+                    // 8. SAVE THE FORMATTED STRING TO THE FILE
+                    fs.writeFileSync(sessionFilePath, finalSessionString);
+
+                    // 9. SEND THE UNIQUE NAME TO THE USER
+                    const successMessage = `
+✅ *Your Session ID Has Been Generated!*
+
+Your unique session name is:
+📋 \`${uniqueName}\`
+
+Copy this name and paste it into the \`SESSION_ID\` or \`conf.session\` variable in your bot's configuration.
+
+_This session name will be used to fetch your credentials automatically._
+`;
+
+                    await Qr_Code_By_Wasi_Tech.sendMessage(
+                        Qr_Code_By_Wasi_Tech.user.id,
+                        { text: successMessage }
+                    );
+
+                    // --- END OF NEW LOGIC ---
+
+                    await delay(100);
+                    await Qr_Code_By_Wasi_Tech.ws.close();
+                    return await removeFile("temp/" + id);
+
+                } else if (connection === "close" && lastDisconnect?.error?.output?.statusCode !== 401) {
+                    await delay(10000);
+                    WASI_MD_QR_CODE();
+                }
+            });
+        } catch (err) {
+            if (!res.headersSent) {
+                await res.json({ code: "Service is Currently Unavailable" });
+            }
+            console.log(err);
+            await removeFile("temp/" + id);
+        }
+    }
+    return await WASI_MD_QR_CODE();
 });
+
 module.exports = router;
