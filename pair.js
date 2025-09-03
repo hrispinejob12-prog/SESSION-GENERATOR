@@ -1,10 +1,8 @@
-const { makeid } = require('./id');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
-let router = express.Router();
 const pino = require("pino");
 const {
     default: makeWASocket,
@@ -15,265 +13,237 @@ const {
     DisconnectReason
 } = require("@whiskeysockets/baileys");
 
-function removeFile(FilePath) {
-    if (!fs.existsSync(FilePath)) return false;
-    fs.rmSync(FilePath, { recursive: true, force: true });
+const router = express.Router();
+
+// --- HELPER FUNCTIONS ---
+
+/**
+ * Generates a random alphanumeric ID of a given length.
+ * @param {number} length The desired length of the ID.
+ * @returns {string} The generated random ID.
+ */
+function makeid(length = 5) {
+    let result = '';
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const charactersLength = characters.length;
+    for (let i = 0; i < length; i++) {
+        result += characters.charAt(Math.floor(Math.random() * charactersLength));
+    }
+    return result;
 }
 
+/**
+ * Recursively removes a file or directory.
+ * @param {string} filePath The path to the file or directory to remove.
+ */
+function removeFile(filePath) {
+    if (fs.existsSync(filePath)) {
+        fs.rmSync(filePath, { recursive: true, force: true });
+    }
+}
+
+/**
+ * Generates a unique session name with a prefix.
+ * @returns {string} The unique session name.
+ */
 function generateUniqueName() {
-  const randomPart = makeid(5).toLowerCase();
-  return `bwmxmd_${randomPart}`;
+    const randomPart = makeid(5).toLowerCase();
+    return `bwmxmd_${randomPart}`;
 }
 
-// Function to validate and format phone number for WhatsApp
+/**
+ * Validates and formats a phone number, with a focus on Kenyan numbers.
+ * @param {string} number The input phone number.
+ * @returns {string} The formatted phone number for WhatsApp.
+ */
 function formatPhoneNumber(number) {
-    // Remove all non-digit characters
-    let cleanNumber = number.replace(/\D/g, '');
-    
-    // Remove leading zeros if present
+    let cleanNumber = number.replace(/\D/g, ''); // Remove all non-digit characters
+
     if (cleanNumber.startsWith('0')) {
-        cleanNumber = cleanNumber.substring(1);
+        cleanNumber = '254' + cleanNumber.substring(1);
+    } else if (cleanNumber.length === 9 && !cleanNumber.startsWith('254')) {
+        cleanNumber = '254' + cleanNumber;
     }
-    
-    // If number starts with Kenyan country code, ensure it's properly formatted
-    if (cleanNumber.startsWith('254')) {
-        return cleanNumber;
-    } else if (cleanNumber.length === 9) {
-        // Kenyan number without country code (e.g., 7xxxxxxxx)
-        return '254' + cleanNumber;
-    }
-    
-    // For other formats, return as is (let WhatsApp validate)
     return cleanNumber;
 }
 
-router.get('/', async (req, res) => {
-    const id = makeid();
-    let num = req.query.number;
-    
-    if (!num || !num.match(/[\d\s+\-()]+/)) {
-        return res.status(400).send({ error: "Valid phone number required" });
-    }
-    
-    // Format the phone number
-    num = formatPhoneNumber(num);
-    if (num.length < 10) {
-        return res.status(400).send({ error: "Invalid phone number format" });
-    }
-    
-    const tempDir = path.join(__dirname, 'temp');
-    try {
-        if (!fs.existsSync(tempDir)) {
-            fs.mkdirSync(tempDir, { recursive: true });
+/**
+ * Ensures that the required directories for sessions exist.
+ * @param  {...string} dirs A list of directory paths to ensure exist.
+ */
+function ensureDirectoriesExist(...dirs) {
+    for (const dir of dirs) {
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
         }
-    } catch (dirError) {
-        console.error("Error creating temp directory:", dirError);
-        return res.status(500).send({ error: "Server configuration error" });
     }
+}
 
+
+// --- CORE PAIRING LOGIC ---
+
+/**
+ * Handles the logic for saving the session file once connected.
+ * @param {object} socket The Baileys socket instance.
+ * @param {string} authPath The path to the temporary authentication files.
+ */
+async function saveSession(socket, authPath) {
     const sessionsDir = path.join(__dirname, 'sessions');
-    try {
-        if (!fs.existsSync(sessionsDir)) {
-            fs.mkdirSync(sessionsDir, { recursive: true });
-        }
-    } catch (dirError) {
-        console.error("Error creating sessions directory:", dirError);
-        return res.status(500).send({ error: "Server configuration error" });
+    const credsPath = path.join(authPath, 'creds.json');
+
+    if (!fs.existsSync(credsPath)) {
+        throw new Error("Credentials file not found after pairing.");
     }
 
-    let responseSent = false;
-    let pairingCode = null;
-    let socket = null;
-    let connectionTimeout = null;
+    const credsData = fs.readFileSync(credsPath);
+    const compressedData = zlib.gzipSync(credsData);
+    const checksum = crypto.createHash('md5').update(credsData).digest('hex');
+    const base64CompressedData = compressedData.toString('base64');
     
-    async function WASI_MD_PAIR_CODE() {
-        const authPath = path.join('./temp/', id);
-        const { state, saveCreds } = await useMultiFileAuthState(authPath);
-        
-        try {
-            socket = makeWASocket({
-                auth: {
-                    creds: state.creds,
-                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
-                },
-                printQRInTerminal: false,
-                logger: pino({ level: "fatal" }).child({ level: "fatal" }),
-                browser: Browsers.macOS("Desktop"),
-                // Add these connection options for better stability
-                connectTimeoutMs: 60000,
-                keepAliveIntervalMs: 10000,
-                defaultQueryTimeoutMs: 60000,
-            });
+    const finalSessionString = `BWM-XMD;;;${base64CompressedData};;;${checksum}`;
 
-            // Handle credentials updates
-            socket.ev.on('creds.update', saveCreds);
-            
-            // Set a timeout for the connection process
-            connectionTimeout = setTimeout(() => {
-                if (!responseSent) {
-                    responseSent = true;
-                    res.status(500).send({ error: "Connection timeout. Please try again." });
-                    removeFile(authPath);
-                    if (socket) {
-                        socket.end(undefined);
-                    }
-                }
-            }, 60000); // 60 second timeout
+    const uniqueName = generateUniqueName();
+    const sessionFilePath = path.join(sessionsDir, `${uniqueName}.json`);
+    fs.writeFileSync(sessionFilePath, finalSessionString);
 
-            // Handle connection updates
-            socket.ev.on("connection.update", async (update) => {
-                const { connection, lastDisconnect, qr } = update;
-                
-                console.log("Connection update:", connection, "QR:", qr ? "present" : "absent");
-                
-                if (connection === "connecting") {
-                    console.log("Connecting to WhatsApp...");
-                }
-                else if (connection === "open") {
-                    console.log("Connection opened successfully - pairing complete");
-                    clearTimeout(connectionTimeout);
-                    
-                    try {
-                        await delay(3000); // Give time for connection to stabilize
+    console.log(`[SUCCESS] Session saved successfully: ${uniqueName}`);
 
-                        try {
-                            // Read and verify creds file exists
-                            const credsPath = path.join(authPath, 'creds.json');
-                            if (!fs.existsSync(credsPath)) {
-                                throw new Error("Credentials file not found");
-                            }
-                            
-                            const credsData = fs.readFileSync(credsPath);
-                            
-                            // Compress the data
-                            const compressedData = zlib.gzipSync(credsData);
-                            
-                            // Add checksum for verification
-                            const checksum = crypto.createHash('md5').update(credsData).digest('hex');
-                            
-                            // Encode to Base64 and format it
-                            const base64CompressedData = compressedData.toString('base64');
-                            const finalSessionString = `BWM-XMD;;;${base64CompressedData};;;${checksum}`;
-
-                            // Generate unique name and file path
-                            const uniqueName = generateUniqueName();
-                            const sessionFilePath = path.join(sessionsDir, `${uniqueName}.json`);
-
-                            // Save the formatted string to the file
-                            fs.writeFileSync(sessionFilePath, finalSessionString);
-                            
-                            // Verify file was created
-                            if (!fs.existsSync(sessionFilePath)) {
-                                throw new Error("Failed to create session file");
-                            }
-                            
-                            console.log("Session saved successfully:", uniqueName);
-                            
-                            // Send success message
-                            const successMessage = `✅ *Your Session ID Has Been Generated!*
+    const successMessage = `✅ *Your Session ID Has Been Generated!*
 
 Your unique session name is:
 📋 \`${uniqueName}\`
 
-Copy this name and paste it into the \`SESSION_ID\` or \`conf.session\` variable in your bot's configuration.
+Copy this name and paste it into the \`SESSION_ID\` or \`conf.session\` variable in your bot's configuration.`;
 
-_This session name will be used to fetch your credentials automatically._`;
+    await socket.sendMessage(socket.user.id, { text: successMessage });
+}
 
-                            await socket.sendMessage(
-                                socket.user.id, 
-                                { text: successMessage }
-                            );
+/**
+ * Manages the entire pairing process for a single request.
+ * @param {string} phoneNumber The user's phone number.
+ * @param {object} res The Express response object.
+ */
+async function handlePairingRequest(phoneNumber, res) {
+    const id = makeid();
+    const authPath = path.join(__dirname, 'temp', id);
+    let socket;
+    let responseSent = false;
+    let codeRequested = false;
 
-                        } catch (processingError) {
-                            console.error("Error processing session:", processingError);
-                            try {
-                                await socket.sendMessage(
-                                    socket.user.id, 
-                                    { text: "❌ Error creating your session. Please try again." }
-                                );
-                            } catch (msgError) {
-                                console.error("Failed to send error message:", msgError);
-                            }
-                        }
+    const cleanup = () => {
+        clearTimeout(requestTimeout);
+        if (socket) {
+            socket.end(undefined);
+        }
+        removeFile(authPath);
+    };
 
-                        await delay(1000);
-                        // Close connection after successful pairing
-                        try {
-                            await socket.ws.close();
-                            console.log("Connection closed successfully");
-                        } catch (closeError) {
-                            console.error("Error closing connection:", closeError);
-                        }
-                        removeFile(authPath);
-                        
-                    } catch (error) {
-                        console.error("Error in connection:", error);
-                        removeFile(authPath);
+    const sendError = (message, statusCode = 500) => {
+        if (!responseSent) {
+            responseSent = true;
+            res.status(statusCode).send({ error: message });
+        }
+        cleanup();
+    };
+
+    const requestTimeout = setTimeout(() => {
+        sendError("Pairing process timed out. Please try again.", 408);
+    }, 90000);
+
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState(authPath);
+
+        socket = makeWASocket({
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
+            },
+            printQRInTerminal: false,
+            logger: pino({ level: "silent" }),
+            // --- KEY CHANGE: Using a common browser identity ---
+            browser: Browsers.ubuntu("Chrome"),
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 0,
+            keepAliveIntervalMs: 10000,
+        });
+
+        socket.ev.on('creds.update', saveCreds);
+
+        socket.ev.on("connection.update", async (update) => {
+            const { connection, lastDisconnect } = update;
+            
+            // --- KEY CHANGE: Request code only when the socket is ready ---
+            if (connection === 'connecting' && !codeRequested) {
+                 try {
+                    console.log(`[INFO] Socket is connecting. Requesting pairing code for ${phoneNumber}`);
+                    codeRequested = true;
+                    const code = await socket.requestPairingCode(phoneNumber);
+                    if (code && !responseSent) {
+                        responseSent = true;
+                        res.send({ code: code });
                     }
-                } else if (connection === "close") {
-                    console.log("Connection closed");
-                    const statusCode = lastDisconnect?.error?.output?.statusCode;
-                    console.log("Disconnect status code:", statusCode);
-                    
-                    if (statusCode === DisconnectReason.connectionClosed) {
-                        console.log("Connection closed normally");
-                    } else if (statusCode === DisconnectReason.connectionLost) {
-                        console.log("Connection lost, attempting to reconnect...");
-                        await delay(5000);
-                        WASI_MD_PAIR_CODE().catch(console.error);
-                    } else {
-                        console.log("Authentication error or connection failure");
-                        if (!responseSent) {
-                            responseSent = true;
-                            res.status(500).send({ error: "Connection failed. Please try again." });
-                        }
-                        removeFile(authPath);
-                    }
+                } catch (error) {
+                    console.error("[ERROR] Failed to request pairing code:", error);
+                    sendError("Failed to request pairing code. The phone number might be invalid or WhatsApp is temporarily blocking requests.", 400);
+                }
+            }
+
+            if (connection === "open") {
+                console.log(`[OPEN] Connection established for ${id}`);
+                try {
+                    await delay(2000); 
+                    await saveSession(socket, authPath);
+                } catch (error) {
+                    console.error("[ERROR] Failed to save session:", error);
+                    sendError("Could not process your session after connection.");
+                } finally {
+                    cleanup();
+                }
+            } else if (connection === "close") {
+                const reason = lastDisconnect?.error?.output?.statusCode;
+                console.log(`[CLOSE] Connection closed for ${id}. Reason: ${DisconnectReason[reason] || reason}`);
+                
+                let errorMessage = "Connection failed. Please try again.";
+                if (reason === DisconnectReason.timedOut) {
+                    errorMessage = "Connection timed out. Please check your internet connection.";
+                } else if (reason === 401) {
+                    errorMessage = "Unauthorized. The pairing code was likely incorrect or expired. Please try again.";
                 }
                 
-                // Request pairing code only when the connection is ready
-                if (connection === "open" || connection === "connecting") {
-                    // Wait a bit more to ensure the connection is stable
-                    setTimeout(async () => {
-                        if (!socket.authState.creds.registered && !pairingCode && !responseSent) {
-                            console.log("Requesting pairing code from WhatsApp for:", num);
-                            
-                            try {
-                                // Request pairing code
-                                pairingCode = await socket.requestPairingCode(num);
-                                console.log("Pairing code received from WhatsApp:", pairingCode);
-                                
-                                if (!responseSent) {
-                                    responseSent = true;
-                                    res.send({ code: pairingCode });
-                                }
-                            } catch (error) {
-                                console.error("Error requesting pairing code from WhatsApp:", error);
-                                if (!responseSent) {
-                                    responseSent = true;
-                                    res.status(500).send({ 
-                                        error: "Failed to request pairing code from WhatsApp. Make sure the number is correct and try again." 
-                                    });
-                                }
-                                removeFile(authPath);
-                            }
-                        }
-                    }, 5000); // Wait 5 seconds after connection starts
+                if (reason !== DisconnectReason.loggedOut) {
+                   sendError(errorMessage);
+                } else {
+                    cleanup();
                 }
-            });
-
-        } catch (err) {
-            console.error("Error in pairing process:", err);
-            clearTimeout(connectionTimeout);
-            removeFile(path.join('./temp/', id));
-            if (!responseSent) {
-                responseSent = true;
-                res.status(500).send({ error: "Service Unavailable: " + err.message });
             }
+        });
+    } catch (error) {
+        console.error(`[FATAL] Error in pairing process for ${id}:`, error);
+        sendError(error.message || "An unexpected error occurred.");
+    }
+}
+
+
+// --- EXPRESS ROUTE DEFINITION ---
+
+router.get('/', async (req, res) => {
+    const num = req.query.number;
+    if (!num || !/^\+?\d{10,14}$/.test(num.replace(/\s+/g, ''))) {
+        return res.status(400).send({ error: "A valid phone number is required." });
+    }
+
+    const formattedNum = formatPhoneNumber(num);
+
+    try {
+        ensureDirectoriesExist(path.join(__dirname, 'temp'), path.join(__dirname, 'sessions'));
+        await handlePairingRequest(formattedNum, res);
+    } catch (error) {
+        console.error("[SERVER ERROR] Failed to initialize pairing process:", error);
+        if (!res.headersSent) {
+            res.status(500).send({ error: "Server configuration error." });
         }
     }
-    
-    await WASI_MD_PAIR_CODE();
 });
 
 module.exports = router;
+
