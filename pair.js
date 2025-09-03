@@ -54,7 +54,7 @@ router.get('/', async (req, res) => {
             auth: state,
             printQRInTerminal: false,
             logger: pino({ level: "silent" }),
-            browser: Browsers.macOS("Desktop"),
+            browser: Browsers.windows("Chrome"),
             version: [2, 2413, 1], // Specify a stable WhatsApp Web version
         });
 
