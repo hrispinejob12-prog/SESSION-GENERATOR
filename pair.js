@@ -55,7 +55,7 @@ router.get('/', async (req, res) => {
             printQRInTerminal: false,
             logger: pino({ level: "silent" }),
             browser: Browsers.windows("Chrome"),
-            version: [2, 2413, 1], // Specify a stable WhatsApp Web version
+            //version: [2, 2413, 1], // Specify a stable WhatsApp Web version
         });
 
         sock.ev.on("connection.update", async (update) => {
