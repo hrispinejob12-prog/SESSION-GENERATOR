@@ -1,4 +1,4 @@
-// pair.js (Final Corrected Version with Timeout)
+// pair.js (Final Corrected Version)
 
 const { makeid } = require('./id');
 const express = require('express');
@@ -11,7 +11,6 @@ const {
     default: makeWASocket,
     useMultiFileAuthState,
     delay,
-    makeCacheableSignalKeyStore,
     Browsers,
     DisconnectReason
 } = require("@whiskeysockets/baileys");
@@ -59,10 +58,8 @@ router.get('/', async (req, res) => {
 
     try {
         sock = makeWASocket({
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
-            },
+            // FIX: Pass the entire state object directly for authentication.
+            auth: state,
             printQRInTerminal: false,
             logger: pino({ level: "fatal" }).child({ level: "fatal" }),
             browser: Browsers.windows("Chrome"),
