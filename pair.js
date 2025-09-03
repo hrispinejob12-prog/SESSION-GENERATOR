@@ -84,6 +84,7 @@ router.get('/', async (req, res) => {
     let responseSent = false;
     let pairingCode = null;
     let socket = null;
+    let connectionTimeout = null;
     
     async function WASI_MD_PAIR_CODE() {
         const authPath = path.join('./temp/', id);
@@ -98,19 +99,40 @@ router.get('/', async (req, res) => {
                 printQRInTerminal: false,
                 logger: pino({ level: "fatal" }).child({ level: "fatal" }),
                 browser: Browsers.macOS("Desktop"),
+                // Add these connection options for better stability
+                connectTimeoutMs: 60000,
+                keepAliveIntervalMs: 10000,
+                defaultQueryTimeoutMs: 60000,
             });
 
             // Handle credentials updates
             socket.ev.on('creds.update', saveCreds);
             
+            // Set a timeout for the connection process
+            connectionTimeout = setTimeout(() => {
+                if (!responseSent) {
+                    responseSent = true;
+                    res.status(500).send({ error: "Connection timeout. Please try again." });
+                    removeFile(authPath);
+                    if (socket) {
+                        socket.end(undefined);
+                    }
+                }
+            }, 60000); // 60 second timeout
+
             // Handle connection updates
             socket.ev.on("connection.update", async (update) => {
-                const { connection, lastDisconnect } = update;
+                const { connection, lastDisconnect, qr } = update;
                 
-                console.log("Connection update:", connection);
+                console.log("Connection update:", connection, "QR:", qr ? "present" : "absent");
                 
-                if (connection === "open") {
+                if (connection === "connecting") {
+                    console.log("Connecting to WhatsApp...");
+                }
+                else if (connection === "open") {
                     console.log("Connection opened successfully - pairing complete");
+                    clearTimeout(connectionTimeout);
+                    
                     try {
                         await delay(3000); // Give time for connection to stabilize
 
@@ -193,48 +215,56 @@ _This session name will be used to fetch your credentials automatically._`;
                     const statusCode = lastDisconnect?.error?.output?.statusCode;
                     console.log("Disconnect status code:", statusCode);
                     
-                    if (statusCode !== 401 && statusCode !== DisconnectReason.connectionClosed) {
+                    if (statusCode === DisconnectReason.connectionClosed) {
+                        console.log("Connection closed normally");
+                    } else if (statusCode === DisconnectReason.connectionLost) {
+                        console.log("Connection lost, attempting to reconnect...");
                         await delay(5000);
-                        console.log("Attempting to reconnect...");
                         WASI_MD_PAIR_CODE().catch(console.error);
                     } else {
-                        console.log("Authentication error or normal closure, cleaning up...");
+                        console.log("Authentication error or connection failure");
+                        if (!responseSent) {
+                            responseSent = true;
+                            res.status(500).send({ error: "Connection failed. Please try again." });
+                        }
                         removeFile(authPath);
                     }
                 }
+                
+                // Request pairing code only when the connection is ready
+                if (connection === "open" || connection === "connecting") {
+                    // Wait a bit more to ensure the connection is stable
+                    setTimeout(async () => {
+                        if (!socket.authState.creds.registered && !pairingCode && !responseSent) {
+                            console.log("Requesting pairing code from WhatsApp for:", num);
+                            
+                            try {
+                                // Request pairing code
+                                pairingCode = await socket.requestPairingCode(num);
+                                console.log("Pairing code received from WhatsApp:", pairingCode);
+                                
+                                if (!responseSent) {
+                                    responseSent = true;
+                                    res.send({ code: pairingCode });
+                                }
+                            } catch (error) {
+                                console.error("Error requesting pairing code from WhatsApp:", error);
+                                if (!responseSent) {
+                                    responseSent = true;
+                                    res.status(500).send({ 
+                                        error: "Failed to request pairing code from WhatsApp. Make sure the number is correct and try again." 
+                                    });
+                                }
+                                removeFile(authPath);
+                            }
+                        }
+                    }, 5000); // Wait 5 seconds after connection starts
+                }
             });
 
-            // --- CRUCIAL FIX: Wait for socket to initialize before requesting pairing code ---
-            console.log(`Waiting for socket to initialize for ${num}...`);
-            await delay(3000); 
-
-            // Request pairing code from WhatsApp if not registered
-            if (!socket.authState.creds.registered) {
-                console.log("Requesting pairing code from WhatsApp for:", num);
-                
-                try {
-                    // Request pairing code
-                    pairingCode = await socket.requestPairingCode(num);
-                    console.log("Pairing code received from WhatsApp:", pairingCode);
-                    
-                    if (!responseSent) {
-                        responseSent = true;
-                        res.send({ code: pairingCode });
-                    }
-                } catch (error) {
-                    console.error("Error requesting pairing code from WhatsApp:", error);
-                    if (!responseSent) {
-                        responseSent = true;
-                        res.status(500).send({ 
-                            error: "Failed to request pairing code from WhatsApp. Make sure the number is correct and try again." 
-                        });
-                    }
-                    removeFile(authPath);
-                    return;
-                }
-            }
         } catch (err) {
             console.error("Error in pairing process:", err);
+            clearTimeout(connectionTimeout);
             removeFile(path.join('./temp/', id));
             if (!responseSent) {
                 responseSent = true;
