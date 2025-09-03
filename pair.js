@@ -53,7 +53,7 @@ router.get('/', async (req, res) => {
             },
             printQRInTerminal: false,
             logger: pino({ level: "fatal" }).child({ level: "fatal" }),
-            browser: Browsers.ubuntu("Chrome"), // Using a different browser identifier for stability
+            browser: Browsers.windows("Chrome"), // Using a different browser identifier for stability
             version: [2, 2443, 4], // Pinning a specific, stable WhatsApp version
         });
 
