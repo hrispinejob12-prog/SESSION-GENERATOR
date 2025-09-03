@@ -1,105 +1,153 @@
+// pair.js (Modified)
+
+const PastebinAPI = require('pastebin-js');
+const pastebin = new PastebinAPI('LS_Cj1IM_8DPObrYbScXZ1srAu17WCxt');
 const { makeid } = require('./id');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib');
+const zlib = require('zlib'); // <-- 1. IMPORT ZLIB FOR COMPRESSION
 let router = express.Router();
 const pino = require("pino");
 const {
     default: makeWASocket,
     useMultiFileAuthState,
     delay,
-    Browsers,
-    DisconnectReason
+    makeCacheableSignalKeyStore,
+    Browsers
 } = require("@whiskeysockets/baileys");
-const { Boom } = require("@hapi/boom");
-
-const tempDir = path.join(__dirname, 'temp');
-if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir);
-}
 
 function removeFile(FilePath) {
-    if (!fs.existsSync(FilePath)) return;
+    if (!fs.existsSync(FilePath)) return false;
     fs.rmSync(FilePath, { recursive: true, force: true });
 }
 
+// <-- 2. FUNCTION TO GENERATE YOUR UNIQUE SESSION NAME
 function generateUniqueName() {
-    const randomPart = makeid(5).toLowerCase();
-    return `bwmxmd_${randomPart}`;
+  const randomPart = makeid(5).toLowerCase(); // Using your makeid function
+  return `bwmxmd_${randomPart}`;
 }
 
 router.get('/', async (req, res) => {
-    const num = req.query.number?.replace(/[^0-9]/g, '');
-    let sock;
-
-    if (!num) {
-        return res.status(400).send({ error: "A valid phone number is required." });
+    const id = makeid();
+    let num = req.query.number;
+    
+    if (!num || !num.match(/[\d\s+\-()]+/)) {
+        return res.status(400).send({ error: "Valid phone number required" });
     }
     
-    const id = makeid();
-    const authPath = path.join(tempDir, id);
-    const sessionsDir = path.join(__dirname, 'sessions');
+    const tempDir = path.join(__dirname, 'temp');
+    if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+    }
 
+    // <-- 3. ENSURE THE FINAL SESSIONS DIRECTORY EXISTS
+    const sessionsDir = path.join(__dirname, 'sessions');
     if (!fs.existsSync(sessionsDir)) {
         fs.mkdirSync(sessionsDir, { recursive: true });
     }
 
-    const { state, saveCreds } = await useMultiFileAuthState(authPath);
+    async function WASI_MD_PAIR_CODE() {
+        const authPath = path.join('./temp/', id);
+        const { state, saveCreds } = await useMultiFileAuthState(authPath);
+        
+        try {
+            let Pair_Code_By_Wasi_Tech = makeWASocket({
+                auth: {
+                    creds: state.creds,
+                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
+                },
+                printQRInTerminal: false,
+                logger: pino({ level: "fatal" }).child({ level: "fatal" }),
+                browser: Browsers.macOS("Desktop"),
+            });
 
-    try {
-        sock = makeWASocket({
-            auth: state,
-            printQRInTerminal: false,
-            logger: pino({ level: "silent" }),
-            browser: Browsers.macOS("Desktop"),
-        });
-
-        sock.ev.on("connection.update", async (update) => {
-            const { connection, lastDisconnect } = update;
-
-            if (connection === "open") {
-                await delay(5000);
-                const credsData = fs.readFileSync(path.join(authPath, 'creds.json'));
-                const compressedData = zlib.gzipSync(credsData);
-                const base64CompressedData = compressedData.toString('base64');
-                const finalSessionString = `BWM-XMD;;;${base64CompressedData}`;
-                const uniqueName = generateUniqueName();
-                const sessionFilePath = path.join(sessionsDir, `${uniqueName}.json`);
+            if (!Pair_Code_By_Wasi_Tech.authState.creds.registered) {
+                await delay(1500);
+                num = num.replace(/[^0-9]/g, '');
                 
-                fs.writeFileSync(sessionFilePath, finalSessionString);
-
-                const successMessage = `✅ *Your Session ID Has Been Generated!*\n\nYour unique session name is:\n📋 \`${uniqueName}\`\n\nCopy this name and paste it into the \`SESSION_ID\` variable.`;
-                
-                await sock.sendMessage(sock.user.id, { text: successMessage });
-                
-                await delay(100);
-                sock.ws.close();
-                removeFile(authPath);
-
-            } else if (connection === "close") {
-                const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-                if (reason !== DisconnectReason.loggedOut) {
+                try {
+                    const code = await Pair_Code_By_Wasi_Tech.requestPairingCode(num);
+                    if (!res.headersSent) {
+                        res.send({ code });
+                    }
+                } catch (error) {
+                    console.error("Error requesting pairing code:", error);
+                    if (!res.headersSent) {
+                        res.status(500).send({ error: "Failed to request pairing code" });
+                    }
                     removeFile(authPath);
                 }
             }
-        });
 
-        sock.ev.on('creds.update', saveCreds);
+            Pair_Code_By_Wasi_Tech.ev.on('creds.update', saveCreds);
+            Pair_Code_By_Wasi_Tech.ev.on("connection.update", async (s) => {
+                const { connection, lastDisconnect } = s;
+                
+                if (connection === "open") {
+                    try {
+                        await delay(5000);
 
-        if (!sock.authState.creds.registered) {
-            await delay(1500);
-            const code = await sock.requestPairingCode(num);
-            if(res.headersSent) return;
-            res.send({ code });
+                        // --- START OF NEW LOGIC ---
+                        
+                        // 4. READ THE CREDS.JSON FILE
+                        const credsData = fs.readFileSync(path.join(authPath, 'creds.json'));
+                        
+                        // 5. COMPRESS THE DATA
+                        const compressedData = zlib.gzipSync(credsData);
+                        
+                        // 6. ENCODE TO BASE64 AND FORMAT IT
+                        const base64CompressedData = compressedData.toString('base64');
+                        const finalSessionString = `BWM-XMD;;;${base64CompressedData}`;
+
+                        // 7. GENERATE UNIQUE NAME AND FILE PATH
+                        const uniqueName = generateUniqueName();
+                        const sessionFilePath = path.join(sessionsDir, `${uniqueName}.json`);
+
+                        // 8. SAVE THE FORMATTED STRING TO THE FILE
+                        fs.writeFileSync(sessionFilePath, finalSessionString);
+                        
+                        // 9. SEND THE UNIQUE NAME TO THE USER, NOT THE RAW SESSION
+                        const successMessage = `
+✅ *Your Session ID Has Been Generated!*
+
+Your unique session name is:
+📋 \`${uniqueName}\`
+
+Copy this name and paste it into the \`SESSION_ID\` or \`conf.session\` variable in your bot's configuration.
+
+_This session name will be used to fetch your credentials automatically._
+`;
+
+                        await Pair_Code_By_Wasi_Tech.sendMessage(
+                            Pair_Code_By_Wasi_Tech.user.id, 
+                            { text: successMessage }
+                        );
+
+                        // --- END OF NEW LOGIC ---
+
+                        await delay(100);
+                        await Pair_Code_By_Wasi_Tech.ws.close();
+                        removeFile(authPath); // Clean up the temp auth folder
+                    } catch (error) {
+                        console.error("Error in connection:", error);
+                        removeFile(authPath);
+                    }
+                } else if (connection === "close" && lastDisconnect?.error?.output?.statusCode !== 401) {
+                    await delay(10000);
+                    WASI_MD_PAIR_CODE().catch(console.error);
+                }
+            });
+        } catch (err) {
+            console.error("Error in pairing process:", err);
+            removeFile(path.join('./temp/', id));
+            if (!res.headersSent) {
+                res.status(500).send({ error: "Service Unavailable" });
+            }
         }
-
-    } catch (err) {
-        console.error("An unexpected error occurred:", err);
-        removeFile(authPath);
-        if(res.headersSent) return;
-        res.status(500).send({ error: "An unexpected error occurred." });
     }
+    
+    await WASI_MD_PAIR_CODE();
 });
 
 module.exports = router;
