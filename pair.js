@@ -25,12 +25,40 @@ function generateUniqueName() {
   return `bwmxmd_${randomPart}`;
 }
 
+// Function to validate and format phone number for WhatsApp
+function formatPhoneNumber(number) {
+    // Remove all non-digit characters
+    let cleanNumber = number.replace(/\D/g, '');
+    
+    // Remove leading zeros if present
+    if (cleanNumber.startsWith('0')) {
+        cleanNumber = cleanNumber.substring(1);
+    }
+    
+    // If number starts with Kenyan country code, ensure it's properly formatted
+    if (cleanNumber.startsWith('254')) {
+        return cleanNumber;
+    } else if (cleanNumber.length === 9) {
+        // Kenyan number without country code (e.g., 7xxxxxxxx)
+        return '254' + cleanNumber;
+    }
+    
+    // For other formats, return as is (let WhatsApp validate)
+    return cleanNumber;
+}
+
 router.get('/', async (req, res) => {
     const id = makeid();
     let num = req.query.number;
     
     if (!num || !num.match(/[\d\s+\-()]+/)) {
         return res.status(400).send({ error: "Valid phone number required" });
+    }
+    
+    // Format the phone number
+    num = formatPhoneNumber(num);
+    if (num.length < 10) {
+        return res.status(400).send({ error: "Invalid phone number format" });
     }
     
     const tempDir = path.join(__dirname, 'temp');
@@ -77,14 +105,9 @@ router.get('/', async (req, res) => {
             
             // Handle connection updates
             socket.ev.on("connection.update", async (update) => {
-                const { connection, lastDisconnect, qr } = update;
+                const { connection, lastDisconnect } = update;
                 
                 console.log("Connection update:", connection);
-                
-                if (qr && !responseSent) {
-                    // If QR is generated but we want pairing code instead
-                    console.log("QR code generated but we need pairing code");
-                }
                 
                 if (connection === "open") {
                     console.log("Connection opened successfully - pairing complete");
@@ -181,14 +204,15 @@ _This session name will be used to fetch your credentials automatically._`;
                 }
             });
 
+            // --- CRUCIAL FIX: Wait for socket to initialize before requesting pairing code ---
+            console.log(`Waiting for socket to initialize for ${num}...`);
+            await delay(3000); 
+
             // Request pairing code from WhatsApp if not registered
             if (!socket.authState.creds.registered) {
-                await delay(1000);
-                num = num.replace(/[^0-9]/g, '');
+                console.log("Requesting pairing code from WhatsApp for:", num);
                 
                 try {
-                    console.log("Requesting pairing code from WhatsApp for:", num);
-                    
                     // Request pairing code
                     pairingCode = await socket.requestPairingCode(num);
                     console.log("Pairing code received from WhatsApp:", pairingCode);
