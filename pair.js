@@ -33,7 +33,7 @@ router.get('/', async (req, res) => {
                 },
                 printQRInTerminal: false,
                 logger: pino({level: "fatal"}).child({level: "fatal"}),
-                browser: Browsers.windows("Chrome"),
+                browser: [Browsers.Chrome, 'Windows 10', 'Chrome/89.0.4389.82'],
              });
              if(!Pair_Code_By_Gifted_Tech.authState.creds.registered) {
                 await delay(1500);
