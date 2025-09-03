@@ -14,14 +14,13 @@ const {
 } = require("@whiskeysockets/baileys");
 const { Boom } = require("@hapi/boom");
 
-// Ensure temp directory exists
 const tempDir = path.join(__dirname, 'temp');
 if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
 }
 
 function removeFile(FilePath) {
-    if (!fs.existsSync(FilePath)) return false;
+    if (!fs.existsSync(FilePath)) return;
     fs.rmSync(FilePath, { recursive: true, force: true });
 }
 
@@ -31,14 +30,13 @@ function generateUniqueName() {
 }
 
 router.get('/', async (req, res) => {
-    let num = req.query.number;
+    const num = req.query.number?.replace(/[^0-9]/g, '');
     let sock;
 
-    if (!num || !num.match(/[\d\s+\-()]+/)) {
+    if (!num) {
         return res.status(400).send({ error: "A valid phone number is required." });
     }
     
-    num = num.replace(/[^0-9]/g, '');
     const id = makeid();
     const authPath = path.join(tempDir, id);
     const sessionsDir = path.join(__dirname, 'sessions');
@@ -54,8 +52,8 @@ router.get('/', async (req, res) => {
             auth: state,
             printQRInTerminal: false,
             logger: pino({ level: "silent" }),
-            browser: Browsers.windows("Chrome"),
-            //version: [2, 2413, 1], // Specify a stable WhatsApp Web version
+            browser: Browsers.macOS("Desktop"),
+            version: [2, 2413, 1],
         });
 
         sock.ev.on("connection.update", async (update) => {
@@ -63,7 +61,6 @@ router.get('/', async (req, res) => {
 
             if (connection === "open") {
                 await delay(5000);
-
                 const credsData = fs.readFileSync(path.join(authPath, 'creds.json'));
                 const compressedData = zlib.gzipSync(credsData);
                 const base64CompressedData = compressedData.toString('base64');
@@ -73,7 +70,7 @@ router.get('/', async (req, res) => {
                 
                 fs.writeFileSync(sessionFilePath, finalSessionString);
 
-                const successMessage = `✅ *Your Session ID Has Been Generated!*\n\nYour unique session name is:\n📋 \`${uniqueName}\`\n\nCopy this name and paste it into the \`SESSION_ID\` or \`conf.session\` variable.`;
+                const successMessage = `✅ *Your Session ID Has Been Generated!*\n\nYour unique session name is:\n📋 \`${uniqueName}\`\n\nCopy this name and paste it into the \`SESSION_ID\` variable.`;
                 
                 await sock.sendMessage(sock.user.id, { text: successMessage });
                 
@@ -84,7 +81,6 @@ router.get('/', async (req, res) => {
             } else if (connection === "close") {
                 const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
                 if (reason !== DisconnectReason.loggedOut) {
-                    // Non-logout related closure, clean up
                     removeFile(authPath);
                 }
             }
