@@ -53,7 +53,6 @@ router.get('/', async (req, res) => {
             printQRInTerminal: false,
             logger: pino({ level: "silent" }),
             browser: Browsers.macOS("Desktop"),
-            version: [2, 2413, 1],
         });
 
         sock.ev.on("connection.update", async (update) => {
