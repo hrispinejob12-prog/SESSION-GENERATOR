@@ -55,13 +55,14 @@ router.get('/', async (req, res) => {
 
     let responseSent = false;
     let pairingCode = null;
+    let socket = null;
     
     async function WASI_MD_PAIR_CODE() {
         const authPath = path.join('./temp/', id);
         const { state, saveCreds } = await useMultiFileAuthState(authPath);
         
         try {
-            let Pair_Code_By_Wasi_Tech = makeWASocket({
+            socket = makeWASocket({
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
@@ -71,41 +72,19 @@ router.get('/', async (req, res) => {
                 browser: Browsers.macOS("Desktop"),
             });
 
-            // Request pairing code from WhatsApp if not registered
-            if (!Pair_Code_By_Wasi_Tech.authState.creds.registered) {
-                await delay(1000);
-                num = num.replace(/[^0-9]/g, '');
-                
-                try {
-                    console.log("Requesting pairing code from WhatsApp for:", num);
-                    
-                    // This is the correct way to request a pairing code from WhatsApp
-                    pairingCode = await Pair_Code_By_Wasi_Tech.requestPairingCode(num);
-                    console.log("Pairing code received from WhatsApp:", pairingCode);
-                    
-                    if (!responseSent) {
-                        responseSent = true;
-                        res.send({ code: pairingCode });
-                    }
-                } catch (error) {
-                    console.error("Error requesting pairing code from WhatsApp:", error);
-                    if (!responseSent) {
-                        responseSent = true;
-                        res.status(500).send({ 
-                            error: "Failed to request pairing code from WhatsApp. Make sure the number is correct and try again." 
-                        });
-                    }
-                    removeFile(authPath);
-                    return;
-                }
-            }
-
-            Pair_Code_By_Wasi_Tech.ev.on('creds.update', saveCreds);
+            // Handle credentials updates
+            socket.ev.on('creds.update', saveCreds);
             
-            Pair_Code_By_Wasi_Tech.ev.on("connection.update", async (update) => {
+            // Handle connection updates
+            socket.ev.on("connection.update", async (update) => {
                 const { connection, lastDisconnect, qr } = update;
                 
                 console.log("Connection update:", connection);
+                
+                if (qr && !responseSent) {
+                    // If QR is generated but we want pairing code instead
+                    console.log("QR code generated but we need pairing code");
+                }
                 
                 if (connection === "open") {
                     console.log("Connection opened successfully - pairing complete");
@@ -155,16 +134,16 @@ Copy this name and paste it into the \`SESSION_ID\` or \`conf.session\` variable
 
 _This session name will be used to fetch your credentials automatically._`;
 
-                            await Pair_Code_By_Wasi_Tech.sendMessage(
-                                Pair_Code_By_Wasi_Tech.user.id, 
+                            await socket.sendMessage(
+                                socket.user.id, 
                                 { text: successMessage }
                             );
 
                         } catch (processingError) {
                             console.error("Error processing session:", processingError);
                             try {
-                                await Pair_Code_By_Wasi_Tech.sendMessage(
-                                    Pair_Code_By_Wasi_Tech.user.id, 
+                                await socket.sendMessage(
+                                    socket.user.id, 
                                     { text: "❌ Error creating your session. Please try again." }
                                 );
                             } catch (msgError) {
@@ -175,7 +154,7 @@ _This session name will be used to fetch your credentials automatically._`;
                         await delay(1000);
                         // Close connection after successful pairing
                         try {
-                            await Pair_Code_By_Wasi_Tech.ws.close();
+                            await socket.ws.close();
                             console.log("Connection closed successfully");
                         } catch (closeError) {
                             console.error("Error closing connection:", closeError);
@@ -201,6 +180,35 @@ _This session name will be used to fetch your credentials automatically._`;
                     }
                 }
             });
+
+            // Request pairing code from WhatsApp if not registered
+            if (!socket.authState.creds.registered) {
+                await delay(1000);
+                num = num.replace(/[^0-9]/g, '');
+                
+                try {
+                    console.log("Requesting pairing code from WhatsApp for:", num);
+                    
+                    // Request pairing code
+                    pairingCode = await socket.requestPairingCode(num);
+                    console.log("Pairing code received from WhatsApp:", pairingCode);
+                    
+                    if (!responseSent) {
+                        responseSent = true;
+                        res.send({ code: pairingCode });
+                    }
+                } catch (error) {
+                    console.error("Error requesting pairing code from WhatsApp:", error);
+                    if (!responseSent) {
+                        responseSent = true;
+                        res.status(500).send({ 
+                            error: "Failed to request pairing code from WhatsApp. Make sure the number is correct and try again." 
+                        });
+                    }
+                    removeFile(authPath);
+                    return;
+                }
+            }
         } catch (err) {
             console.error("Error in pairing process:", err);
             removeFile(path.join('./temp/', id));
