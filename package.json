@@ -21,6 +21,8 @@
     "qrcode": "^1.5.3",
     "maher-zubair-baileys": "^6.6.5",
     "awesome-phonenumber": "^2.64.0",
-    "pastebin-js": "^1.0.6"
+    "pastebin-js": "^1.0.6",
+    "body-parser": "^1.20.1",
+    "path": "^0.12.7"
   }
 }
