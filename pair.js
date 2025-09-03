@@ -1,4 +1,4 @@
-// pair.js (Simplified and More Stable)
+// pair.js (Final Corrected Version with Timeout)
 
 const { makeid } = require('./id');
 const express = require('express');
@@ -29,6 +29,8 @@ function generateUniqueName() {
 
 router.get('/', async (req, res) => {
     let num = req.query.number;
+    let sock;
+    let timeout;
 
     if (!num || !num.match(/[\d\s+\-()]+/)) {
         return res.status(400).send({ error: "A valid phone number is required." });
@@ -43,18 +45,27 @@ router.get('/', async (req, res) => {
         fs.mkdirSync(sessionsDir, { recursive: true });
     }
 
+    const cleanup = () => {
+        console.log("Cleaning up temporary files and closing connection.");
+        clearTimeout(timeout);
+        timeout = undefined;
+        if (sock) {
+            sock.ws.close();
+        }
+        removeFile(authPath);
+    };
+
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
 
     try {
-        const sock = makeWASocket({
+        sock = makeWASocket({
             auth: {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
             },
             printQRInTerminal: false,
             logger: pino({ level: "fatal" }).child({ level: "fatal" }),
-            browser: Browsers.windows("Chrome"), // Using a different browser identifier for stability
-            version: [2, 2443, 4], // Pinning a specific, stable WhatsApp version
+            browser: Browsers.windows("Chrome"),
         });
 
         sock.ev.on('creds.update', saveCreds);
@@ -63,9 +74,10 @@ router.get('/', async (req, res) => {
             const { connection, lastDisconnect } = update;
 
             if (connection === "open") {
-                console.log("✅ Pairing successful, connection opened. Saving session...");
-                
-                await delay(5000); // Wait for all creds to be received
+                console.log("✅ Connection opened, clearing timeout and saving session...");
+                clearTimeout(timeout); // User paired successfully, cancel the cleanup timeout
+
+                await delay(5000);
 
                 const credsData = fs.readFileSync(path.join(authPath, 'creds.json'));
                 const compressedData = zlib.gzipSync(credsData);
@@ -88,27 +100,44 @@ Copy this name and paste it into the \`SESSION_ID\` or \`conf.session\` variable
                 console.log(`Session saved for ${sock.user.id}. Name: ${uniqueName}`);
                 
                 await delay(100);
-                sock.ws.close();
-                removeFile(authPath); // Clean up ONLY after a successful pairing
+                cleanup(); // Clean up after successful pairing and message sent
+
             } else if (connection === "close") {
                 const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
                 console.log(`Connection closed. Reason: ${DisconnectReason[reason] || reason}`);
-                // We will not clean up here to prevent the session from being destroyed prematurely.
+                
+                // Clean up only on fatal errors, otherwise let the timeout handle it
+                if (reason === DisconnectReason.loggedOut) {
+                    console.log("Device Logged Out, cleaning up.");
+                    cleanup();
+                }
             }
         });
 
         if (!sock.authState.creds.registered) {
-            await delay(1500); // Give the socket a moment to initialize
+            await delay(1500);
             const code = await sock.requestPairingCode(num);
-            console.log(`✅ Your pairing code is: ${code}`);
-            res.send({ code }); // Send code to browser and keep the process running
+            console.log(`✅ Successfully got pairing code: ${code}`);
+            
+            if (!res.headersSent) {
+                res.send({ code });
+            }
+
+            // Start a 60-second timeout to clean up if the user doesn't pair in time
+            timeout = setTimeout(() => {
+                console.log("⌛ Pairing timed out. Please request a new code.");
+                cleanup();
+            }, 60000);
+
         } else {
-            res.status(400).send({ error: "This session is already registered." });
+            if (!res.headersSent) {
+                res.status(400).send({ error: "Already registered." });
+            }
         }
 
     } catch (err) {
-        console.error("❌ Error during pairing process:", err);
-        removeFile(authPath); // Clean up if a major error occurs
+        console.error("❌ An unexpected error occurred:", err);
+        cleanup();
         if (!res.headersSent) {
             res.status(500).send({ error: "An unexpected error occurred." });
         }
