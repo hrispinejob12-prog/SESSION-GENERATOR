@@ -1,147 +1,100 @@
-// pair.js (Final Corrected Version with Timeout)
-
-const { makeid } = require('./id');
+const PastebinAPI = require('pastebin-js'),
+pastebin = new PastebinAPI('EMWTMkQAVfJa9kM-MRUrxd5Oku1U7pgL')
+const {makeid} = require('./id');
 const express = require('express');
 const fs = require('fs');
-const path = require('path');
-const zlib = require('zlib');
-let router = express.Router();
+let router = express.Router()
 const pino = require("pino");
 const {
-    default: makeWASocket,
+    default: Gifted_Tech,
     useMultiFileAuthState,
     delay,
     makeCacheableSignalKeyStore,
-    Browsers,
-    DisconnectReason
-} = require("@whiskeysockets/baileys");
-const { Boom } = require("@hapi/boom");
+    Browsers
+} = require("maher-zubair-baileys");
 
-function removeFile(FilePath) {
-    if (!fs.existsSync(FilePath)) return false;
-    fs.rmSync(FilePath, { recursive: true, force: true });
-}
-
-function generateUniqueName() {
-  const randomPart = makeid(5).toLowerCase();
-  return `bwmxmd_${randomPart}`;
-}
-
+function removeFile(FilePath){
+    if(!fs.existsSync(FilePath)) return false;
+    fs.rmSync(FilePath, { recursive: true, force: true })
+ };
 router.get('/', async (req, res) => {
-    let num = req.query.number;
-    let sock;
-    let timeout;
-
-    if (!num || !num.match(/[\d\s+\-()]+/)) {
-        return res.status(400).send({ error: "A valid phone number is required." });
-    }
-    
-    num = num.replace(/[^0-9]/g, '');
     const id = makeid();
-    const authPath = path.join('./temp/', id);
-    const sessionsDir = path.join(__dirname, 'sessions');
-
-    if (!fs.existsSync(sessionsDir)) {
-        fs.mkdirSync(sessionsDir, { recursive: true });
-    }
-
-    const cleanup = () => {
-        console.log("Cleaning up temporary files and closing connection.");
-        clearTimeout(timeout);
-        timeout = undefined;
-        if (sock) {
-            sock.ws.close();
-        }
-        removeFile(authPath);
-    };
-
-    const { state, saveCreds } = await useMultiFileAuthState(authPath);
-
-    try {
-        sock = makeWASocket({
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
-            },
-            printQRInTerminal: false,
-            logger: pino({ level: "fatal" }).child({ level: "fatal" }),
-            browser: Browsers.windows("Chrome"),
-        });
-
-        sock.ev.on('creds.update', saveCreds);
-
-        sock.ev.on("connection.update", async (update) => {
-            const { connection, lastDisconnect } = update;
-
-            if (connection === "open") {
-                console.log("✅ Connection opened, clearing timeout and saving session...");
-                clearTimeout(timeout); // User paired successfully, cancel the cleanup timeout
-
+    let num = req.query.number;
+        async function GIFTED_MD_PAIR_CODE() {
+        const {
+            state,
+            saveCreds
+        } = await useMultiFileAuthState('./temp/'+id)
+     try {
+            let Pair_Code_By_Gifted_Tech = Gifted_Tech({
+                auth: {
+                    creds: state.creds,
+                    keys: makeCacheableSignalKeyStore(state.keys, pino({level: "fatal"}).child({level: "fatal"})),
+                },
+                printQRInTerminal: false,
+                logger: pino({level: "fatal"}).child({level: "fatal"}),
+                browser: Browsers.windows("Chrome"),
+             });
+             if(!Pair_Code_By_Gifted_Tech.authState.creds.registered) {
+                await delay(1500);
+                        num = num.replace(/[^0-9]/g,'');
+                            const code = await Pair_Code_By_Gifted_Tech.requestPairingCode(num)
+                 if(!res.headersSent){
+                 await res.send({code});
+                     }
+                 }
+            Pair_Code_By_Gifted_Tech.ev.on('creds.update', saveCreds)
+            Pair_Code_By_Gifted_Tech.ev.on("connection.update", async (s) => {
+                const {
+                    connection,
+                    lastDisconnect
+                } = s;
+                if (connection == "open") {
                 await delay(5000);
+                let data = fs.readFileSync(__dirname + `/temp/${id}/creds.json`);
+                await delay(800);
+               let b64data = Buffer.from(data).toString('base64');
+               let session = await Pair_Code_By_Gifted_Tech.sendMessage(Pair_Code_By_Gifted_Tech.user.id, { text: '' + b64data });
 
-                const credsData = fs.readFileSync(path.join(authPath, 'creds.json'));
-                const compressedData = zlib.gzipSync(credsData);
-                const base64CompressedData = compressedData.toString('base64');
-                const finalSessionString = `BWM-XMD;;;${base64CompressedData}`;
-                const uniqueName = generateUniqueName();
-                const sessionFilePath = path.join(sessionsDir, `${uniqueName}.json`);
-                
-                fs.writeFileSync(sessionFilePath, finalSessionString);
+               let GIFTED_MD_TEXT = `
+*_Pair Code Connected by WASI TECH*
+*_Made With 🤍_*
+______________________________________
+╔════◇
+║ *『 WOW YOU'VE CHOSEN WASI MD 』*
+║ _You Have Completed the First Step to Deploy a Whatsapp Bot._
+╚════════════════════════╝
+╔═════◇
+║  『••• 𝗩𝗶𝘀𝗶𝘁 𝗙𝗼𝗿 𝗛𝗲𝗹𝗽 •••』
+║❒ *Ytube:* _youtube.com/@wasitech1_
+║❒ *Owner:* _https://wa.me/923192173398_
+║❒ *Repo:* _https://github.com/wasixd/WASI-MD
+║❒ *WaGroup:* _https://whatsapp.com/channel/0029VaDK8ZUDjiOhwFS1cP2j
+║❒ *WaChannel:* _https://whatsapp.com/channel/0029VaDK8ZUDjiOhwFS1cP2j
+║❒ *Plugins:* _https://github.com/wasixd/WASI-MD-PLUGINS_
+╚════════════════════════╝
+_____________________________________
 
-                const successMessage = `
-✅ *Your Session ID Has Been Generated!*
+_Don't Forget To Give Star To My Repo_`
+ await Pair_Code_By_Gifted_Tech.sendMessage(Pair_Code_By_Gifted_Tech.user.id,{text:GIFTED_MD_TEXT},{quoted:session})
+ 
 
-Your unique session name is:
-📋 \`${uniqueName}\`
-
-Copy this name and paste it into the \`SESSION_ID\` or \`conf.session\` variable.`;
-                
-                await sock.sendMessage(sock.user.id, { text: successMessage });
-                console.log(`Session saved for ${sock.user.id}. Name: ${uniqueName}`);
-                
-                await delay(100);
-                cleanup(); // Clean up after successful pairing and message sent
-
-            } else if (connection === "close") {
-                const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-                console.log(`Connection closed. Reason: ${DisconnectReason[reason] || reason}`);
-                
-                // Clean up only on fatal errors, otherwise let the timeout handle it
-                if (reason === DisconnectReason.loggedOut) {
-                    console.log("Device Logged Out, cleaning up.");
-                    cleanup();
+        await delay(100);
+        await Pair_Code_By_Gifted_Tech.ws.close();
+        return await removeFile('./temp/'+id);
+            } else if (connection === "close" && lastDisconnect && lastDisconnect.error && lastDisconnect.error.output.statusCode != 401) {
+                    await delay(10000);
+                    GIFTED_MD_PAIR_CODE();
                 }
-            }
-        });
-
-        if (!sock.authState.creds.registered) {
-            await delay(1500);
-            const code = await sock.requestPairingCode(num);
-            console.log(`✅ Successfully got pairing code: ${code}`);
-            
-            if (!res.headersSent) {
-                res.send({ code });
-            }
-
-            // Start a 60-second timeout to clean up if the user doesn't pair in time
-            timeout = setTimeout(() => {
-                console.log("⌛ Pairing timed out. Please request a new code.");
-                cleanup();
-            }, 60000);
-
-        } else {
-            if (!res.headersSent) {
-                res.status(400).send({ error: "Already registered." });
-            }
-        }
-
-    } catch (err) {
-        console.error("❌ An unexpected error occurred:", err);
-        cleanup();
-        if (!res.headersSent) {
-            res.status(500).send({ error: "An unexpected error occurred." });
+            });
+        } catch (err) {
+            console.log("service restated");
+            await removeFile('./temp/'+id);
+         if(!res.headersSent){
+            await res.send({code:"Service Unavailable"});
+         }
         }
     }
+    return await GIFTED_MD_PAIR_CODE()
 });
-
-module.exports = router;
+module.exports = router
